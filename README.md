@@ -1,1 +1,85 @@
 # diffusion
+
+A standalone, self-contained diffusion image/video generation engine in C/C++.
+
+- **No external dependencies.** The required ggml compute kernels are vendored
+  under `kernels/`; the only other third-party code is a handful of
+  single-file headers in `thirdparty/` (stb image I/O, nlohmann json, darts).
+  There is no ggml submodule, no libwebp, no libwebm, no zip.
+- **GGUF and safetensors model loading.** Conversion and quantization are out
+  of scope — use the separate `quantizer` project to prepare GGUF files.
+- **One executable:** `diffusion` (plus the `diffusion` shared library).
+
+## Build
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+The binary is written to `build/bin/diffusion`.
+
+### GPU backends
+
+| Backend | Configure flags |
+|---------|-----------------|
+| CUDA    | `-DSD_CUDA=ON` |
+| ROCm    | `-DSD_HIPBLAS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DAMDGPU_TARGETS=gfx1100` |
+| Metal   | `-DSD_METAL=ON` |
+| Vulkan  | `-DSD_VULKAN=ON` |
+
+Example (CUDA):
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DSD_CUDA=ON
+cmake --build build -j
+```
+
+### Other options
+
+- `-DSD_BUILD_SHARED_LIBS=OFF` — build the diffusion library statically.
+- `-DSD_BUILD_CLI=OFF` — build only the library.
+
+## Usage
+
+```sh
+./build/bin/diffusion \
+    --diffusion-model model.gguf \
+    --llm text_encoder.gguf \
+    --vae vae.gguf \
+    -p "a watercolor fox" \
+    --steps 8 -W 512 -H 512 \
+    -o out.png
+```
+
+Run `./build/bin/diffusion --help` for the full option list. Supported run
+modes: `img_gen` (default), `vid_gen`, `upscale`, `metadata`.
+
+Output formats: PNG / JPG / BMP / TGA (video modes write image sequences or
+AVI).
+
+## Layout
+
+```
+include/stable-diffusion.h   C API of the diffusion library
+src/                         engine (models, samplers, tokenizers, loaders)
+cli/                         the diffusion command-line app
+kernels/                     vendored ggml compute kernels (CPU/CUDA/HIP/Metal/Vulkan)
+thirdparty/                  single-file headers (stb, json, darts)
+```
+
+## Removed compared to the original diffusion.cpp project
+
+- ggml as an external/vendored repo dependency (only the needed kernel tree is kept)
+- convert / quantize modes (`--mode convert`, imatrix collection) — use `quantizer`
+- PyTorch checkpoint loading (`.ckpt`/`.pt`/`.pth` pickle + zip)
+- WebP image and WebM video output (libwebp / libwebm)
+
+
+## Reference
+
+Original diffusion project: [diffusion.cpp](https://github.com/mochiyaki/diffusion.cpp)
+
+## License
+
+This project is licensed under the MIT License. See `LICENSE`.
