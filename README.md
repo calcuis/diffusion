@@ -78,7 +78,7 @@ thirdparty/                  single-file headers (stb, json, darts)
 
 ## Reference
 
-Original diffusion project: [diffusion.cpp](https://github.com/mochiyaki/diffusion.cpp)
+Original diffusion.cpp project: [diffusion.cpp](https://github.com/mochiyaki/diffusion.cpp); thanks all contributors in the Community🤖, especially leejet - stable-diffusion.cpp (MIT License), ggerganov - ggml (MIT License) and etc., to make the based code open sourced! Really appreciate!♥️
 
 ## License
 
