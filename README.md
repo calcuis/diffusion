@@ -35,6 +35,13 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DSD_CUDA=ON
 cmake --build build -j
 ```
 
+Example (METAL):
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DSD_METAL=ON
+cmake --build build -j
+```
+
 ### Other options
 
 - `-DSD_BUILD_SHARED_LIBS=OFF` — build the diffusion library statically.
