@@ -41,6 +41,7 @@ Example (METAL):
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DSD_METAL=ON
 cmake --build build -j
 ```
+* you might need to build or sign it yourself if you don't know how to handle the warning from pre-built Releases
 
 ### Other options
 
