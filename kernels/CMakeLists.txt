@@ -196,6 +196,11 @@ set(GGML_BLAS_VENDOR ${GGML_BLAS_VENDOR_DEFAULT} CACHE STRING
                                             "ggml: BLAS library vendor")
 option(GGML_LLAMAFILE                       "ggml: use LLAMAFILE"                             ${GGML_LLAMAFILE_DEFAULT})
 
+if (GGML_BLAS AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/ggml-blas/CMakeLists.txt")
+    message(WARNING "GGML_BLAS is enabled, but the ggml-blas backend source is not present; disabling GGML_BLAS")
+    set(GGML_BLAS OFF CACHE BOOL "ggml: use BLAS" FORCE)
+endif()
+
 option(GGML_CUDA                            "ggml: use CUDA"                                  OFF)
 option(GGML_MUSA                            "ggml: use MUSA"                                  OFF)
 option(GGML_CUDA_FORCE_MMQ                  "ggml: use mmq kernels instead of cuBLAS"         OFF)
