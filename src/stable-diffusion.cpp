@@ -34,6 +34,11 @@
 #include "model/diffusion/minit2i.hpp"
 #include "model/diffusion/mmdit.hpp"
 #include "model/diffusion/model.hpp"
+// hunyuan.hpp and lingbot_video.hpp must come after ltxv.hpp: they pull in
+// mmdit.hpp's global modulate(), which is ambiguous with LTXV::modulate()
+// under ADL if visible while ltxv.hpp's unqualified calls are compiled.
+#include "model/diffusion/hunyuan.hpp"
+#include "model/diffusion/lingbot_video.hpp"
 #include "model/diffusion/pid.hpp"
 #include "model/diffusion/qwen_image.hpp"
 #include "model/diffusion/unet.hpp"
@@ -42,6 +47,7 @@
 #include "model/upscaler/esrgan.hpp"
 #include "model/upscaler/ltx_latent_upscaler.hpp"
 #include "model/vae/auto_encoder_kl.hpp"
+#include "model/vae/hunyuan_vae.hpp"
 #include "model/vae/ltx_audio_vae.hpp"
 #include "model/vae/ltx_vae.hpp"
 #include "model/vae/tae.hpp"
@@ -85,8 +91,10 @@ const char* model_version_to_str[] = {
     "Wan 2.x",
     "Wan 2.2 I2V",
     "Wan 2.2 TI2V",
+    "LingBot Video",
     "Qwen Image",
     "Qwen Image Layered",
+    "Hunyuan Video",
     "Anima",
     "Flux.2",
     "Flux.2 klein",
@@ -790,6 +798,24 @@ public:
                         return false;
                     }
                 }
+            } else if (sd_version_is_lingbot_video(version)) {
+                bool enable_vision = false;
+                for (const auto& [name, _] : tensor_storage_map) {
+                    if (starts_with(name, "text_encoders.llm.visual.")) {
+                        enable_vision = true;
+                        break;
+                    }
+                }
+                cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
+                                                                  tensor_storage_map,
+                                                                  version,
+                                                                  "",
+                                                                  enable_vision,
+                                                                  model_manager);
+                diffusion_model  = std::make_shared<LingBotVideo::LingBotVideoRunner>(backend_for(SDBackendModule::DIFFUSION),
+                                                                                      tensor_storage_map,
+                                                                                      "model.diffusion_model",
+                                                                                      model_manager);
             } else if (sd_version_is_qwen_image(version)) {
                 bool enable_vision = version != VERSION_QWEN_IMAGE_LAYERED;
                 cond_stage_model   = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
@@ -804,6 +830,18 @@ public:
                                                                           version,
                                                                           sd_ctx_params->qwen_image_zero_cond_t,
                                                                           model_manager);
+            } else if (sd_version_is_hunyuan_video(version)) {
+                cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
+                                                                 tensor_storage_map,
+                                                                 version,
+                                                                 "",
+                                                                 false,
+                                                                 model_manager);
+                diffusion_model  = std::make_shared<Hunyuan::HunyuanVideoRunner>(backend_for(SDBackendModule::DIFFUSION),
+                                                                                 tensor_storage_map,
+                                                                                 "model.diffusion_model",
+                                                                                 version,
+                                                                                 model_manager);
             } else if (sd_version_is_longcat(version)) {
                 cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
                                                                  tensor_storage_map,
@@ -941,7 +979,7 @@ public:
             }
 
             auto create_tae = [&](bool decode_only) -> std::shared_ptr<VAE> {
-                if (sd_version_uses_wan_vae(version) || sd_version_is_ltxav(version)) {
+                if (sd_version_uses_wan_vae(version) || sd_version_is_hunyuan_video(version) || sd_version_is_ltxav(version)) {
                     return std::make_shared<TinyVideoAutoEncoder>(backend_for(SDBackendModule::VAE),
                                                                   tensor_storage_map,
                                                                   "decoder",
@@ -978,6 +1016,13 @@ public:
                                                          false,
                                                          version,
                                                          model_manager);
+                } else if (sd_version_uses_hunyuan_video_vae(version)) {
+                    return std::make_shared<Hunyuan::HunyuanVideoVAERunner>(backend_for(SDBackendModule::VAE),
+                                                                            tensor_storage_map,
+                                                                            "first_stage_model",
+                                                                            false,
+                                                                            version,
+                                                                            model_manager);
                 } else if (sd_version_uses_wan_vae(version)) {
                     return std::make_shared<WAN::WanVAERunner>(backend_for(SDBackendModule::VAE),
                                                                tensor_storage_map,
@@ -1299,6 +1344,8 @@ public:
                     }
                 } else if (sd_version_is_sd3(version) ||
                            sd_version_is_wan(version) ||
+                           sd_version_is_hunyuan_video(version) ||
+                           sd_version_is_lingbot_video(version) ||
                            sd_version_is_qwen_image(version) ||
                            version == VERSION_HIDREAM_O1 ||
                            sd_version_is_anima(version) ||
@@ -1310,6 +1357,8 @@ public:
                     pred_type = FLOW_PRED;
                     if (sd_version_is_wan(version)) {
                         default_flow_shift = 5.f;
+                    } else if (sd_version_is_hunyuan_video(version)) {
+                        default_flow_shift = 7.f;
                     } else if (sd_version_is_ernie_image(version)) {
                         default_flow_shift = 4.f;
                     } else if (sd_version_is_pid(version)) {
@@ -2127,8 +2176,12 @@ public:
 
             sd::Tensor<float> timesteps_tensor({static_cast<int64_t>(timesteps_vec.size())}, timesteps_vec);
             sd::Tensor<float> guidance_tensor({1}, std::vector<float>{guidance.distilled_guidance});
+            sd::Tensor<float> hunyuan_timestep_r_tensor;
+            if (sd_version_is_hunyuan_video(version) && step + 1 < sigmas.size()) {
+                hunyuan_timestep_r_tensor = sd::Tensor<float>::from_vector({sigmas[step + 1]});
+            }
             sd::Tensor<float> noised_input = x * c_in;
-            if (!denoise_mask.empty() && (version == VERSION_WAN2_2_TI2V || sd_version_is_ltxav(version))) {
+            if (!denoise_mask.empty() && (version == VERSION_WAN2_2_TI2V || sd_version_is_ltxav(version) || sd_version_is_lingbot_video(version))) {
                 noised_input = noised_input * denoise_mask + init_latent * (1.0f - denoise_mask);
             }
 
@@ -2197,6 +2250,12 @@ public:
                 } else if (sd_version_is_wan(version)) {
                     diffusion_params.extra = WanDiffusionExtra{vace_context.empty() ? nullptr : &vace_context,
                                                                vace_strength};
+                } else if (sd_version_is_hunyuan_video(version)) {
+                    diffusion_params.extra = HunyuanVideoDiffusionExtra{
+                        &guidance_tensor,
+                        condition.extra_c_crossattns.empty() ? nullptr : &condition.extra_c_crossattns[0],
+                        condition.c_vector.empty() ? nullptr : &condition.c_vector,
+                        hunyuan_timestep_r_tensor.empty() ? nullptr : &hunyuan_timestep_r_tensor};
                 } else if (version == VERSION_HIDREAM_O1) {
                     diffusion_params.extra = HiDreamO1DiffusionExtra{
                         condition.c_input_ids.empty() ? nullptr : &condition.c_input_ids,
@@ -2374,7 +2433,7 @@ public:
     int get_diffusion_model_down_factor() {
         int down_factor = 8;  // unet
         if (sd_version_is_dit(version)) {
-            if (sd_version_is_wan(version)) {
+            if (sd_version_is_wan(version) || sd_version_is_lingbot_video(version)) {
                 down_factor = 2;
             } else {
                 down_factor = 1;
@@ -2390,6 +2449,8 @@ public:
                 latent_channel = 128;
             } else if (version == VERSION_WAN2_2_TI2V) {
                 latent_channel = 48;
+            } else if (sd_version_is_hunyuan_video(version)) {
+                latent_channel = 32;
             } else if (version == VERSION_HIDREAM_O1) {
                 latent_channel = 3;
             } else if (version == VERSION_CHROMA_RADIANCE) {
@@ -2437,7 +2498,7 @@ public:
         int latent_frames = frames;
         if (sd_version_is_ltxav(version)) {
             latent_frames = ((frames - 1) / 8) + 1;
-        } else if (sd_version_is_wan(version)) {
+        } else if (sd_version_is_wan(version) || sd_version_is_lingbot_video(version) || sd_version_is_hunyuan_video(version)) {
             latent_frames = ((frames - 1) / 4) + 1;
         }
         return latent_frames;
@@ -2450,7 +2511,7 @@ public:
         if (sd_version_is_ltxav(version)) {
             return (latent_frames - 1) * 8 + 1;
         }
-        if (sd_version_is_wan(version)) {
+        if (sd_version_is_wan(version) || sd_version_is_lingbot_video(version) || sd_version_is_hunyuan_video(version)) {
             return (latent_frames - 1) * 4 + 1;
         }
         return latent_frames;

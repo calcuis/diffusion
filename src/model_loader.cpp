@@ -411,6 +411,9 @@ SDVersion ModelLoader::get_sd_version() {
             }
             return VERSION_QWEN_IMAGE;
         }
+        if (tensor_storage.name.find("model.diffusion_model.txt_in.individual_token_refiner.blocks.0.adaLN_modulation.1.weight") != std::string::npos) {
+            return VERSION_HUNYUAN_VIDEO;
+        }
         if (tensor_storage.name.find("llm_adapter.blocks.0.cross_attn.q_proj.weight") != std::string::npos) {
             return VERSION_ANIMA;
         }
@@ -440,6 +443,9 @@ SDVersion ModelLoader::get_sd_version() {
         }
         if (tensor_storage.name.find("model.diffusion_model.blocks.0.cross_attn.norm_k.weight") != std::string::npos) {
             is_wan = true;
+        }
+        if (tensor_storage.name.find("model.diffusion_model.patch_embedder.weight") != std::string::npos) {
+            return VERSION_LINGBOT_VIDEO;
         }
         if (tensor_storage.name.find("model.diffusion_model.patch_embedding.weight") != std::string::npos) {
             patch_embedding_channels = tensor_storage.ne[3];
